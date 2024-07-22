@@ -80,24 +80,55 @@ func getStagedDiff() (string, error) {
 
 	var diff bytes.Buffer
 	for filePath, fileStatus := range status {
-		if fileStatus.Staging == git.Added || fileStatus.Staging == git.Modified {
-			staged, err := getStagedFileContent(repo, filePath)
-			if err != nil {
-				return "", fmt.Errorf("getting staged content for %s: %w", filePath, err)
-			}
-
-			unstaged, err := getUnstagedFileContent(worktree, filePath)
-			if err != nil {
-				return "", fmt.Errorf("getting unstaged content for %s: %w", filePath, err)
-			}
-
-			patch, err := generateUnifiedDiff(filePath, staged, unstaged)
+		switch fileStatus.Staging {
+		case git.Added, git.Modified:
+			patch, err := getAddedOrModifiedPatch(repo, worktree, filePath)
 			if err != nil {
 				return "", fmt.Errorf("generating patch for %s: %w", filePath, err)
 			}
-
+			diff.WriteString(patch)
+		case git.Deleted:
+			patch, err := getDeletedPatch(repo, filePath)
+			if err != nil {
+				return "", fmt.Errorf("generating deletion patch for %s: %w", filePath, err)
+			}
 			diff.WriteString(patch)
 		}
+	}
+
+	return diff.String(), nil
+}
+
+func getAddedOrModifiedPatch(repo *git.Repository, worktree *git.Worktree, filePath string) (string, error) {
+	staged, err := getStagedFileContent(repo, filePath)
+	if err != nil {
+		return "", fmt.Errorf("getting staged content: %w", err)
+	}
+
+	unstaged, err := getUnstagedFileContent(worktree, filePath)
+	if err != nil {
+		return "", fmt.Errorf("getting unstaged content: %w", err)
+	}
+
+	return generateUnifiedDiff(filePath, staged, unstaged)
+}
+
+func getDeletedPatch(repo *git.Repository, filePath string) (string, error) {
+	content, err := getStagedFileContent(repo, filePath)
+	if err != nil {
+		return "", fmt.Errorf("getting file content: %w", err)
+	}
+
+	var diff bytes.Buffer
+	diff.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", filePath, filePath))
+	diff.WriteString("deleted file mode 100644\n")
+	diff.WriteString("--- a/" + filePath + "\n")
+	diff.WriteString("+++ /dev/null\n")
+
+	lines := strings.Split(content, "\n")
+	diff.WriteString(fmt.Sprintf("@@ -1,%d +0,0 @@\n", len(lines)))
+	for _, line := range lines {
+		diff.WriteString("-" + line + "\n")
 	}
 
 	return diff.String(), nil
