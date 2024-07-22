@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,44 +14,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-const systemPrompt = `# 命令
-
-あなたは「gitのコミットメッセージを生成するAIアシスタント」です。
-渡されたgitの変更点をもとに最適なコミットメッセージを作成してください。
-
-# 条件
-
-- 変更点の要約を簡潔に伝えること
-- 変更の理由や目的が分かるようにすること
-- コードの具体的な変更内容（ファイル名や機能）を含めること
-- コミットメッセージは日本語で記述すること
-- コードブロック(` + "```" + `)は出力せず内容だけを出力すること
-
-# 入力データ
-
-` + "```" + `
-diff --git a/src/main.js b/src/main.js
-index 83db48d..bfef0a4 100644
---- a/src/main.js
-+++ b/src/main.js
-@@ -25,7 +25,7 @@ function updateUserProfile(user) {
-     userProfile.name = user.name;
-     userProfile.email = user.email;
-     userProfile.age = user.age;
--    userProfile.location = user.location;
-+    userProfile.address = user.address;
-     return userProfile;
- }
-` + "```" + `
-
-# 出力例
-
-` + "```" + `
-updateUserProfile関数でlocationフィールドをaddressにリファクタリング
-
-- ` + "`" + `src/main.js` + "`" + ` 内の ` + "`" + `user.location` + "`" + ` を ` + "`" + `user.address` + "`" + ` に変更
-- データモデルの更新に伴う一貫性を確保
-` + "`"
+//go:embed systemPrompt.md
+var systemPrompt string
 
 type Message struct {
 	Role    string `json:"role"`
