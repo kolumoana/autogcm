@@ -17,6 +17,12 @@ import (
 //go:embed systemPrompt.md
 var systemPrompt string
 
+type CommitMessageGenerator struct {
+	repo     *git.Repository
+	worktree *git.Worktree
+	apiKey   string
+}
+
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -36,13 +42,13 @@ type OpenAIResponse struct {
 }
 
 func main() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: OPENAI_API_KEY environment variable is not set.")
+	generator, err := NewCommitMessageGenerator()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	diff, err := getStagedDiff()
+	diff, err := generator.getStagedDiff()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -53,7 +59,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	commitMessage, err := generateCommitMessage(apiKey, diff)
+	commitMessage, err := generator.generateCommitMessage(diff)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating commit message: %v\n", err)
 		os.Exit(1)
@@ -62,59 +68,74 @@ func main() {
 	fmt.Println(commitMessage)
 }
 
-func getStagedDiff() (string, error) {
+func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+	}
+
 	repo, err := git.PlainOpen(".")
 	if err != nil {
-		return "", fmt.Errorf("opening repository: %w", err)
+		return nil, fmt.Errorf("opening repository: %w", err)
 	}
 
 	worktree, err := repo.Worktree()
 	if err != nil {
-		return "", fmt.Errorf("getting worktree: %w", err)
+		return nil, fmt.Errorf("getting worktree: %w", err)
 	}
 
-	status, err := worktree.Status()
+	return &CommitMessageGenerator{
+		repo:     repo,
+		worktree: worktree,
+		apiKey:   apiKey,
+	}, nil
+}
+
+func (g *CommitMessageGenerator) getStagedDiff() (string, error) {
+	status, err := g.worktree.Status()
 	if err != nil {
 		return "", fmt.Errorf("getting status: %w", err)
 	}
 
 	var diff bytes.Buffer
 	for filePath, fileStatus := range status {
+		var patch string
+		var err error
+
 		switch fileStatus.Staging {
 		case git.Added, git.Modified:
-			patch, err := getAddedOrModifiedPatch(repo, worktree, filePath)
-			if err != nil {
-				return "", fmt.Errorf("generating patch for %s: %w", filePath, err)
-			}
-			diff.WriteString(patch)
+			patch, err = g.getAddedOrModifiedPatch(filePath)
 		case git.Deleted:
-			patch, err := getDeletedPatch(repo, filePath)
-			if err != nil {
-				return "", fmt.Errorf("generating deletion patch for %s: %w", filePath, err)
-			}
-			diff.WriteString(patch)
+			patch, err = g.getDeletedPatch(filePath)
+		default:
+			continue
 		}
+
+		if err != nil {
+			return "", fmt.Errorf("generating patch for %s: %w", filePath, err)
+		}
+		diff.WriteString(patch)
 	}
 
 	return diff.String(), nil
 }
 
-func getAddedOrModifiedPatch(repo *git.Repository, worktree *git.Worktree, filePath string) (string, error) {
-	staged, err := getStagedFileContent(repo, filePath)
+func (g *CommitMessageGenerator) getAddedOrModifiedPatch(filePath string) (string, error) {
+	staged, err := g.getStagedFileContent(filePath)
 	if err != nil {
 		return "", fmt.Errorf("getting staged content: %w", err)
 	}
 
-	unstaged, err := getUnstagedFileContent(worktree, filePath)
+	unstaged, err := g.getUnstagedFileContent(filePath)
 	if err != nil {
 		return "", fmt.Errorf("getting unstaged content: %w", err)
 	}
 
-	return generateUnifiedDiff(filePath, staged, unstaged)
+	return g.generateUnifiedDiff(filePath, staged, unstaged)
 }
 
-func getDeletedPatch(repo *git.Repository, filePath string) (string, error) {
-	content, err := getStagedFileContent(repo, filePath)
+func (g *CommitMessageGenerator) getDeletedPatch(filePath string) (string, error) {
+	content, err := g.getStagedFileContent(filePath)
 	if err != nil {
 		return "", fmt.Errorf("getting file content: %w", err)
 	}
@@ -134,13 +155,13 @@ func getDeletedPatch(repo *git.Repository, filePath string) (string, error) {
 	return diff.String(), nil
 }
 
-func getStagedFileContent(repo *git.Repository, filePath string) (string, error) {
-	head, err := repo.Head()
+func (g *CommitMessageGenerator) getStagedFileContent(filePath string) (string, error) {
+	head, err := g.repo.Head()
 	if err != nil {
 		return "", fmt.Errorf("getting HEAD: %w", err)
 	}
 
-	commit, err := repo.CommitObject(head.Hash())
+	commit, err := g.repo.CommitObject(head.Hash())
 	if err != nil {
 		return "", fmt.Errorf("getting commit object: %w", err)
 	}
@@ -158,16 +179,11 @@ func getStagedFileContent(repo *git.Repository, filePath string) (string, error)
 		return "", fmt.Errorf("getting file from tree: %w", err)
 	}
 
-	content, err := file.Contents()
-	if err != nil {
-		return "", fmt.Errorf("reading file contents: %w", err)
-	}
-
-	return content, nil
+	return file.Contents()
 }
 
-func getUnstagedFileContent(worktree *git.Worktree, filePath string) (string, error) {
-	file, err := worktree.Filesystem.Open(filePath)
+func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string, error) {
+	file, err := g.worktree.Filesystem.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("opening file: %w", err)
 	}
@@ -181,7 +197,7 @@ func getUnstagedFileContent(worktree *git.Worktree, filePath string) (string, er
 	return string(content), nil
 }
 
-func generateUnifiedDiff(filePath, oldContent, newContent string) (string, error) {
+func (g *CommitMessageGenerator) generateUnifiedDiff(filePath, oldContent, newContent string) (string, error) {
 	oldLines := strings.Split(oldContent, "\n")
 	newLines := strings.Split(newContent, "\n")
 
@@ -190,7 +206,7 @@ func generateUnifiedDiff(filePath, oldContent, newContent string) (string, error
 	diff.WriteString("--- a/" + filePath + "\n")
 	diff.WriteString("+++ b/" + filePath + "\n")
 
-	chunks := diffLines(oldLines, newLines)
+	chunks := g.diffLines(oldLines, newLines)
 	for _, chunk := range chunks {
 		diff.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", chunk.oldStart, chunk.oldLines, chunk.newStart, chunk.newLines))
 		for _, line := range chunk.lines {
@@ -206,7 +222,7 @@ type diffChunk struct {
 	lines                                  []string
 }
 
-func diffLines(oldLines, newLines []string) []diffChunk {
+func (g *CommitMessageGenerator) diffLines(oldLines, newLines []string) []diffChunk {
 	var chunks []diffChunk
 	oldIndex, newIndex := 0, 0
 
@@ -241,7 +257,7 @@ func diffLines(oldLines, newLines []string) []diffChunk {
 	return chunks
 }
 
-func generateCommitMessage(apiKey, diff string) (string, error) {
+func (g *CommitMessageGenerator) generateCommitMessage(diff string) (string, error) {
 	url := "https://api.openai.com/v1/chat/completions"
 	requestBody := OpenAIRequest{
 		Model: "gpt-4o-mini",
@@ -262,7 +278,7 @@ func generateCommitMessage(apiKey, diff string) (string, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+g.apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
