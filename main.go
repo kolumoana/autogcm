@@ -70,7 +70,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println(commitMessage)
+	fmt.Fprint(os.Stdout, commitMessage)
 }
 
 func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
