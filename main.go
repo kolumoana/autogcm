@@ -8,11 +8,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/pmezard/go-difflib/difflib"
 )
+
+const maxFileDiffSize = 10000     // Maximum characters for each file's diff
+const maxAddedFilePreview = 10000 // Maximum characters for previewing added files
 
 //go:embed systemPrompt.md
 var systemPrompt string
@@ -91,6 +96,27 @@ func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
 	}, nil
 }
 
+var excludedExtensions = map[string]bool{
+	".pdf":   true,
+	".jpg":   true,
+	".jpeg":  true,
+	".png":   true,
+	".gif":   true,
+	".zip":   true,
+	".tar":   true,
+	".gz":    true,
+	".exe":   true,
+	".dll":   true,
+	".so":    true,
+	".dylib": true,
+	".class": true,
+	".pyc":   true,
+	".jar":   true,
+	".war":   true,
+	".ear":   true,
+	".sum":   true,
+}
+
 func (g *CommitMessageGenerator) getStagedDiff() (string, error) {
 	status, err := g.worktree.Status()
 	if err != nil {
@@ -98,13 +124,21 @@ func (g *CommitMessageGenerator) getStagedDiff() (string, error) {
 	}
 
 	var diff bytes.Buffer
+
 	for filePath, fileStatus := range status {
+		if g.shouldExcludeFile(filePath) {
+			diff.WriteString(fmt.Sprintf("Excluded file: %s (binary or large data file)\n", filePath))
+			continue
+		}
+
 		var patch string
 		var err error
 
 		switch fileStatus.Staging {
-		case git.Added, git.Modified:
-			patch, err = g.getAddedOrModifiedPatch(filePath)
+		case git.Added:
+			patch, err = g.getAddedPatch(filePath, maxAddedFilePreview)
+		case git.Modified:
+			patch, err = g.getModifiedPatch(filePath)
 		case git.Deleted:
 			patch, err = g.getDeletedPatch(filePath)
 		default:
@@ -114,24 +148,126 @@ func (g *CommitMessageGenerator) getStagedDiff() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("generating patch for %s: %w", filePath, err)
 		}
+
+		// Truncate the patch if it exceeds the max size (except for added files)
+		if fileStatus.Staging != git.Added && len(patch) > maxFileDiffSize {
+			patch, truncated := g.truncatePatch(patch, maxFileDiffSize)
+			if truncated {
+				patch += fmt.Sprintf("\n... (truncated, total %d characters) ...\n", len(patch))
+			}
+		}
+
 		diff.WriteString(patch)
 	}
 
 	return diff.String(), nil
 }
 
-func (g *CommitMessageGenerator) getAddedOrModifiedPatch(filePath string) (string, error) {
-	staged, err := g.getStagedFileContent(filePath)
+func (g *CommitMessageGenerator) shouldExcludeFile(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if excludedExtensions[ext] {
+		return true
+	}
+
+	// Check if the file is likely to be a binary file
+	content, err := g.getUnstagedFileContent(filePath)
+	if err != nil {
+		// If we can't read the file, assume it's binary
+		return true
+	}
+
+	// Check for null bytes, which are common in binary files
+	if bytes.IndexByte([]byte(content), 0) != -1 {
+		return true
+	}
+
+	return false
+}
+
+func (g *CommitMessageGenerator) getAddedPatch(filePath string, maxPreview int) (string, error) {
+	content, err := g.getUnstagedFileContent(filePath)
+	if err != nil {
+		return "", fmt.Errorf("getting file content: %w", err)
+	}
+
+	var diff bytes.Buffer
+	diff.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", filePath, filePath))
+	diff.WriteString("new file mode 100644\n")
+	diff.WriteString("--- /dev/null\n")
+	diff.WriteString(fmt.Sprintf("+++ b/%s\n", filePath))
+
+	if len(content) > maxPreview {
+		preview := content[:maxPreview]
+		lineCount := strings.Count(content, "\n") + 1
+		diff.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@ (preview)\n", lineCount))
+		for _, line := range strings.Split(preview, "\n") {
+			diff.WriteString("+" + line + "\n")
+		}
+		diff.WriteString(fmt.Sprintf("\n... (file truncated, total %d characters) ...\n", len(content)))
+	} else {
+		lineCount := strings.Count(content, "\n") + 1
+		diff.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", lineCount))
+		for _, line := range strings.Split(content, "\n") {
+			diff.WriteString("+" + line + "\n")
+		}
+	}
+
+	return diff.String(), nil
+}
+
+func (g *CommitMessageGenerator) getModifiedPatch(filePath string) (string, error) {
+	// Get the staged version of the file
+	stagedContent, err := g.getStagedFileContent(filePath)
 	if err != nil {
 		return "", fmt.Errorf("getting staged content: %w", err)
 	}
 
-	unstaged, err := g.getUnstagedFileContent(filePath)
+	// Get the unstaged version of the file
+	unstagedContent, err := g.getUnstagedFileContent(filePath)
 	if err != nil {
 		return "", fmt.Errorf("getting unstaged content: %w", err)
 	}
 
-	return g.generateUnifiedDiff(filePath, staged, unstaged)
+	diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        difflib.SplitLines(stagedContent),
+		B:        difflib.SplitLines(unstagedContent),
+		FromFile: "a/" + filePath,
+		ToFile:   "b/" + filePath,
+		Context:  3,
+	})
+	if err != nil {
+		return "", fmt.Errorf("generating diff: %w", err)
+	}
+
+	return fmt.Sprintf("diff --git a/%s b/%s\n%s", filePath, filePath, diff), nil
+}
+
+func (g *CommitMessageGenerator) truncatePatch(patch string, maxSize int) (string, bool) {
+	if len(patch) <= maxSize {
+		return patch, false
+	}
+
+	lines := strings.Split(patch, "\n")
+	var truncated bytes.Buffer
+	var currentSize int
+
+	// Always include the file name and diff header
+	for i, line := range lines {
+		if i < 2 || strings.HasPrefix(line, "@@") {
+			truncated.WriteString(line + "\n")
+			currentSize += len(line) + 1
+			continue
+		}
+
+		if currentSize+len(line)+1 > maxSize {
+			break
+		}
+
+		truncated.WriteString(line + "\n")
+		currentSize += len(line) + 1
+	}
+
+	return truncated.String(), true
 }
 
 func (g *CommitMessageGenerator) getDeletedPatch(filePath string) (string, error) {
@@ -195,66 +331,6 @@ func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string
 	}
 
 	return string(content), nil
-}
-
-func (g *CommitMessageGenerator) generateUnifiedDiff(filePath, oldContent, newContent string) (string, error) {
-	oldLines := strings.Split(oldContent, "\n")
-	newLines := strings.Split(newContent, "\n")
-
-	var diff bytes.Buffer
-	diff.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", filePath, filePath))
-	diff.WriteString("--- a/" + filePath + "\n")
-	diff.WriteString("+++ b/" + filePath + "\n")
-
-	chunks := g.diffLines(oldLines, newLines)
-	for _, chunk := range chunks {
-		diff.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", chunk.oldStart, chunk.oldLines, chunk.newStart, chunk.newLines))
-		for _, line := range chunk.lines {
-			diff.WriteString(line + "\n")
-		}
-	}
-
-	return diff.String(), nil
-}
-
-type diffChunk struct {
-	oldStart, oldLines, newStart, newLines int
-	lines                                  []string
-}
-
-func (g *CommitMessageGenerator) diffLines(oldLines, newLines []string) []diffChunk {
-	var chunks []diffChunk
-	oldIndex, newIndex := 0, 0
-
-	for oldIndex < len(oldLines) || newIndex < len(newLines) {
-		chunk := diffChunk{oldStart: oldIndex + 1, newStart: newIndex + 1}
-
-		for oldIndex < len(oldLines) && newIndex < len(newLines) && oldLines[oldIndex] == newLines[newIndex] {
-			chunk.lines = append(chunk.lines, " "+oldLines[oldIndex])
-			oldIndex++
-			newIndex++
-		}
-
-		oldStart := oldIndex
-		for oldIndex < len(oldLines) && (newIndex >= len(newLines) || oldLines[oldIndex] != newLines[newIndex]) {
-			chunk.lines = append(chunk.lines, "-"+oldLines[oldIndex])
-			oldIndex++
-		}
-
-		newStart := newIndex
-		for newIndex < len(newLines) && (oldIndex >= len(oldLines) || oldLines[oldIndex] != newLines[newIndex]) {
-			chunk.lines = append(chunk.lines, "+"+newLines[newIndex])
-			newIndex++
-		}
-
-		if len(chunk.lines) > 0 {
-			chunk.oldLines = oldIndex - oldStart
-			chunk.newLines = newIndex - newStart
-			chunks = append(chunks, chunk)
-		}
-	}
-
-	return chunks
 }
 
 func (g *CommitMessageGenerator) generateCommitMessage(diff string) (string, error) {
