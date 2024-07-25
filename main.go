@@ -16,8 +16,8 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-const maxFileDiffSize = 10000     // Maximum characters for each file's diff
-const maxAddedFilePreview = 10000 // Maximum characters for previewing added files
+const maxFileDiffSize = 10000    // Maximum characters for each file's diff
+const maxAddedFilePreview = 5000 // Maximum characters for previewing added files
 
 //go:embed systemPrompt.md
 var systemPrompt string
