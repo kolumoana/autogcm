@@ -2,7 +2,10 @@ module github.com/kolumoana/autogcm
 
 go 1.22.1
 
-require github.com/go-git/go-git/v5 v5.12.0
+require (
+	github.com/go-git/go-git/v5 v5.12.0
+	github.com/pmezard/go-difflib v1.0.0
+)
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
