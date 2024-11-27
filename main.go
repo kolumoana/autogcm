@@ -74,9 +74,9 @@ func main() {
 }
 
 func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiKey := os.Getenv("GROQ_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+		return nil, fmt.Errorf("GROQ_API_KEY environment variable is not set")
 	}
 
 	repo, err := git.PlainOpen(".")
@@ -334,9 +334,9 @@ func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string
 }
 
 func (g *CommitMessageGenerator) generateCommitMessage(diff string) (string, error) {
-	url := "https://api.openai.com/v1/chat/completions"
+	url := "https://api.groq.com/openai/v1/chat/completions"
 	requestBody := OpenAIRequest{
-		Model: "gpt-4o-mini",
+		Model: "llama3-70b-8192",
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: diff},

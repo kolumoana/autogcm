@@ -2,9 +2,9 @@
 
 自動的に Git コミットメッセージを生成します。
 
-## 必要条件
+## 依存
 
-- OpenAI API キー
+- [Groq API キー](https://groq.com/)
 
 ## インストール
 
@@ -15,7 +15,7 @@ go install github.com/kolumoana/autogcm@latest
 ## セットアップ
 
 ```
-export OPENAI_API_KEY='your_api_key_here'
+export GROQ_API_KEY='your_api_key_here'
 ```
 
 ## 使用方法
