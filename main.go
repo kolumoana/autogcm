@@ -336,7 +336,7 @@ func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string
 func (g *CommitMessageGenerator) generateCommitMessage(diff string) (string, error) {
 	url := "https://api.groq.com/openai/v1/chat/completions"
 	requestBody := OpenAIRequest{
-		Model: "llama3-70b-8192",
+		Model: "llama3-8b-8192",
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: diff},
