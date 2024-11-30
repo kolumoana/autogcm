@@ -64,7 +64,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	commitMessage, err := generator.generateCommitMessage(diff)
+	commitMessage, err := generator.lazyGenerateCommitMessage(diff)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating commit message: %v\n", err)
 		os.Exit(1)
@@ -333,8 +333,22 @@ func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string
 	return string(content), nil
 }
 
-func (g *CommitMessageGenerator) generateCommitMessage(diff string) (string, error) {
-	url := "https://api.groq.com/openai/v1/chat/completions"
+func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string, error) {
+	groqUrl, groqModel := "https://api.groq.com/openai/v1/chat/completions", "llama3-70b-8192"
+	openAIUrl, openAIModel := "https://api.openai.com/v1/chat/completions", "gpt-4o-mini-2024-07-18"
+
+	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff)
+	if err != nil {
+		return g.generateCommitMessage(openAIUrl, openAIModel, diff)
+	}
+
+	return groqResp, nil
+}
+
+func (g *CommitMessageGenerator) generateCommitMessage(
+	url string,
+	model string,
+	diff string) (string, error) {
 	requestBody := OpenAIRequest{
 		Model: "llama3-70b-8192",
 		Messages: []Message{
