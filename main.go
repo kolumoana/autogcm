@@ -340,12 +340,12 @@ func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string
 }
 
 func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string, error) {
-	groqUrl, groqModel := "https://api.groq.com/openai/v1/chat/completions", "llama3-70b-8192"
-	openAIUrl, openAIModel := "https://api.openai.com/v1/chat/completions", "gpt-4o-mini-2024-07-18"
+	groqUrl, groqModel, groqAPIKey := "https://api.groq.com/openai/v1/chat/completions", "llama3-70b-8192", g.groqAPIKey
+	openAIUrl, openAIModel, openAIAPIKey := "https://api.openai.com/v1/chat/completions", "gpt-4o-mini-2024-07-18", g.openAIAPIKey
 
-	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff, g.groqAPIKey)
+	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff, groqAPIKey)
 	if err != nil {
-		return g.generateCommitMessage(openAIUrl, openAIModel, diff, g.openAIAPIKey)
+		return g.generateCommitMessage(openAIUrl, openAIModel, diff, openAIAPIKey)
 	}
 
 	return groqResp, nil
