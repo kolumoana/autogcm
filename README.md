@@ -5,6 +5,7 @@
 ## 依存
 
 - [Groq API キー](https://groq.com/)
+- [OpenAI API キー](https://platform.openai.com/api-keys)
 
 ## インストール
 
@@ -16,6 +17,7 @@ go install github.com/kolumoana/autogcm@latest
 
 ```
 export GROQ_API_KEY='your_api_key_here'
+export OPENAI_API_KEY='your_api_key_here'
 ```
 
 ## 使用方法

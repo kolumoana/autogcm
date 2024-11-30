@@ -23,9 +23,10 @@ const maxAddedFilePreview = 5000 // Maximum characters for previewing added file
 var systemPrompt string
 
 type CommitMessageGenerator struct {
-	repo     *git.Repository
-	worktree *git.Worktree
-	apiKey   string
+	repo         *git.Repository
+	worktree     *git.Worktree
+	groqAPIKey   string
+	openAIAPIKey string
 }
 
 type Message struct {
@@ -74,9 +75,13 @@ func main() {
 }
 
 func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
-	apiKey := os.Getenv("GROQ_API_KEY")
-	if apiKey == "" {
+	groqAPIKey := os.Getenv("GROQ_API_KEY")
+	if groqAPIKey == "" {
 		return nil, fmt.Errorf("GROQ_API_KEY environment variable is not set")
+	}
+	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
+	if openAIAPIKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
 	}
 
 	repo, err := git.PlainOpen(".")
@@ -90,9 +95,10 @@ func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
 	}
 
 	return &CommitMessageGenerator{
-		repo:     repo,
-		worktree: worktree,
-		apiKey:   apiKey,
+		repo:         repo,
+		worktree:     worktree,
+		groqAPIKey:   groqAPIKey,
+		openAIAPIKey: openAIAPIKey,
 	}, nil
 }
 
@@ -337,9 +343,9 @@ func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string,
 	groqUrl, groqModel := "https://api.groq.com/openai/v1/chat/completions", "llama3-70b-8192"
 	openAIUrl, openAIModel := "https://api.openai.com/v1/chat/completions", "gpt-4o-mini-2024-07-18"
 
-	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff)
+	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff, g.groqAPIKey)
 	if err != nil {
-		return g.generateCommitMessage(openAIUrl, openAIModel, diff)
+		return g.generateCommitMessage(openAIUrl, openAIModel, diff, g.groqAPIKey)
 	}
 
 	return groqResp, nil
@@ -348,9 +354,11 @@ func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string,
 func (g *CommitMessageGenerator) generateCommitMessage(
 	url string,
 	model string,
-	diff string) (string, error) {
+	diff string,
+	apiKey string,
+) (string, error) {
 	requestBody := OpenAIRequest{
-		Model: "llama3-70b-8192",
+		Model: model,
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: diff},
@@ -368,7 +376,7 @@ func (g *CommitMessageGenerator) generateCommitMessage(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+g.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
