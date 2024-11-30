@@ -357,10 +357,6 @@ func (g *CommitMessageGenerator) generateCommitMessage(
 	diff string,
 	apiKey string,
 ) (string, error) {
-	fmt.Println("url", url)
-	fmt.Println("model", model)
-	fmt.Println("diff", diff)
-	fmt.Println("apiKey", apiKey)
 	requestBody := OpenAIRequest{
 		Model: model,
 		Messages: []Message{
