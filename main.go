@@ -345,7 +345,7 @@ func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string,
 
 	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff, g.groqAPIKey)
 	if err != nil {
-		return g.generateCommitMessage(openAIUrl, openAIModel, diff, g.groqAPIKey)
+		return g.generateCommitMessage(openAIUrl, openAIModel, diff, g.openAIAPIKey)
 	}
 
 	return groqResp, nil
