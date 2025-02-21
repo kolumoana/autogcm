@@ -16,8 +16,8 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-const maxFileDiffSize = 8000     // Maximum characters for each file's diff
-const maxAddedFilePreview = 5000 // Maximum characters for previewing added files
+const maxFileDiffSize = 4000     // Maximum characters for each file's diff
+const maxAddedFilePreview = 4000 // Maximum characters for previewing added files
 
 //go:embed systemPrompt.md
 var systemPrompt string
@@ -340,8 +340,21 @@ func (g *CommitMessageGenerator) getUnstagedFileContent(filePath string) (string
 }
 
 func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string, error) {
-	groqUrl, groqModel, groqAPIKey := "https://api.groq.com/openai/v1/chat/completions", "llama3-70b-8192", g.groqAPIKey
-	openAIUrl, openAIModel, openAIAPIKey := "https://api.openai.com/v1/chat/completions", "gpt-4o-mini-2024-07-18", g.openAIAPIKey
+	groqUrl := "https://api.groq.com/openai/v1/chat/completions"
+	groqAPIKey := g.groqAPIKey
+
+	// コンテキスト長に基づいてモデルを選択（llama3-70b-8192のトークン制限8192、1トークン≈4文字）
+	const llama3ContextLimit = 8192 * 4 // 32768文字
+	var groqModel string
+	if len(diff) > llama3ContextLimit {
+		groqModel = "mixtral-8x7b-32768" // 長いdiffの場合
+	} else {
+		groqModel = "llama3-70b-8192" // 短いdiffの場合
+	}
+
+	openAIUrl := "https://api.openai.com/v1/chat/completions"
+	openAIModel := "gpt-4o-mini-2024-07-18"
+	openAIAPIKey := g.openAIAPIKey
 
 	groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff, groqAPIKey)
 	if err != nil {
