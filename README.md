@@ -4,11 +4,7 @@
 
 ## 依存
 
-以下のいずれかの API キーが必要です：
-
-- [Gemini API キー](https://aistudio.google.com/app/apikey)
-- [Groq API キー](https://groq.com/)
-- [OpenAI API キー](https://platform.openai.com/api-keys)
+Groq の API キーが必要です（OpenAI 互換エンドポイントを使用）。
 
 ## インストール
 
@@ -18,15 +14,18 @@ go install github.com/kolumoana/autogcm@latest
 
 ## セットアップ
 
-以下の環境変数を設定してください（少なくとも1つは必須）：
+以下の環境変数を設定してください：
 
 ```
-export GEMINI_API_KEY='your_api_key_here'
 export GROQ_API_KEY='your_api_key_here'
-export OPENAI_API_KEY='your_api_key_here'
 ```
 
-API の優先順位: Gemini → Groq → OpenAI
+任意で以下を上書きできます：
+
+```
+export GROQ_BASE_URL='https://api.groq.com/openai/v1'
+export GROQ_MODEL='openai/gpt-oss-20b'
+```
 
 ## 使用方法
 

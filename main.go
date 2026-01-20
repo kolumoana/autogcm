@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -26,8 +27,9 @@ type CommitMessageGenerator struct {
 	repo         *git.Repository
 	worktree     *git.Worktree
 	groqAPIKey   string
-	openAIAPIKey string
-	geminiAPIKey string
+	groqBaseURL  string
+	groqModel    string
+	httpClient   *http.Client
 }
 
 type Message struct {
@@ -48,27 +50,8 @@ type OpenAIResponse struct {
 	} `json:"choices"`
 }
 
-type GeminiRequest struct {
-	Contents []GeminiContent `json:"contents"`
-}
-
-type GeminiContent struct {
-	Parts []GeminiPart `json:"parts"`
-}
-
-type GeminiPart struct {
-	Text string `json:"text"`
-}
-
-type GeminiResponse struct {
-	Candidates []struct {
-		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		} `json:"content"`
-	} `json:"candidates"`
-}
+const defaultGroqBaseURL = "https://api.groq.com/openai/v1"
+const defaultGroqModel = "openai/gpt-oss-20b"
 
 func main() {
 	generator, err := NewCommitMessageGenerator()
@@ -98,13 +81,18 @@ func main() {
 }
 
 func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
-	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 	groqAPIKey := os.Getenv("GROQ_API_KEY")
-	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
-	
-	// At least one API key must be set
-	if geminiAPIKey == "" && groqAPIKey == "" && openAIAPIKey == "" {
-		return nil, fmt.Errorf("At least one of GEMINI_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY environment variable must be set")
+	groqBaseURL := os.Getenv("GROQ_BASE_URL")
+	groqModel := os.Getenv("GROQ_MODEL")
+
+	if groqAPIKey == "" {
+		return nil, fmt.Errorf("GROQ_API_KEY environment variable must be set")
+	}
+	if groqBaseURL == "" {
+		groqBaseURL = defaultGroqBaseURL
+	}
+	if groqModel == "" {
+		groqModel = defaultGroqModel
 	}
 
 	repo, err := git.PlainOpen(".")
@@ -121,8 +109,11 @@ func NewCommitMessageGenerator() (*CommitMessageGenerator, error) {
 		repo:         repo,
 		worktree:     worktree,
 		groqAPIKey:   groqAPIKey,
-		openAIAPIKey: openAIAPIKey,
-		geminiAPIKey: geminiAPIKey,
+		groqBaseURL:  groqBaseURL,
+		groqModel:    groqModel,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}, nil
 }
 
@@ -424,42 +415,8 @@ func (g *CommitMessageGenerator) lazyGenerateCommitMessage(diff string) (string,
 
 	commitStyle := g.analyzeCommitStyle(recentMessages)
 
-	// Try Gemini first if API key is available
-	if g.geminiAPIKey != "" {
-		geminiResp, err := g.generateGeminiCommitMessage(diff, commitStyle)
-		if err == nil {
-			return geminiResp, nil
-		}
-		// If Gemini fails, continue to other APIs
-	}
-
-	// Try Groq if API key is available
-	if g.groqAPIKey != "" {
-		groqUrl := "https://api.groq.com/openai/v1/chat/completions"
-		// コンテキスト長に基づいてモデルを選択（llama3-70b-8192のトークン制限8192、1トークン≈4文字）
-		const llama3ContextLimit = 8192 * 4 // 32768文字
-		var groqModel string
-		if len(diff) > llama3ContextLimit {
-			groqModel = "mixtral-8x7b-32768" // 長いdiffの場合
-		} else {
-			groqModel = "llama3-70b-8192" // 短いdiffの場合
-		}
-
-		groqResp, err := g.generateCommitMessage(groqUrl, groqModel, diff, g.groqAPIKey, commitStyle)
-		if err == nil {
-			return groqResp, nil
-		}
-		// If Groq fails, continue to OpenAI
-	}
-
-	// Try OpenAI as last fallback if API key is available
-	if g.openAIAPIKey != "" {
-		openAIUrl := "https://api.openai.com/v1/chat/completions"
-		openAIModel := "gpt-4o-mini-2024-07-18"
-		return g.generateCommitMessage(openAIUrl, openAIModel, diff, g.openAIAPIKey, commitStyle)
-	}
-
-	return "", fmt.Errorf("all available APIs failed to generate commit message")
+	groqURL := strings.TrimRight(g.groqBaseURL, "/") + "/chat/completions"
+	return g.generateCommitMessage(groqURL, g.groqModel, diff, g.groqAPIKey, commitStyle)
 }
 
 func (g *CommitMessageGenerator) generateCommitMessage(
@@ -497,8 +454,7 @@ func (g *CommitMessageGenerator) generateCommitMessage(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := g.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("sending request: %w", err)
 	}
@@ -520,88 +476,6 @@ func (g *CommitMessageGenerator) generateCommitMessage(
 	}
 
 	commitMessage := openAIResp.Choices[0].Message.Content
-	commitMessage = strings.TrimSpace(commitMessage)
-	
-	// Remove common prefixes that models might add
-	prefixesToRemove := []string{
-		"Here is the generated commit message:",
-		"Here is the generated commit message:\n",
-		"以下がコミットメッセージです:",
-		"以下がコミットメッセージです:\n",
-		"Generated commit message:",
-		"Generated commit message:\n",
-	}
-	
-	for _, prefix := range prefixesToRemove {
-		commitMessage = strings.TrimPrefix(commitMessage, prefix)
-	}
-	
-	commitMessage = strings.TrimSpace(commitMessage)
-	commitMessage = strings.TrimPrefix(commitMessage, "```")
-	commitMessage = strings.TrimSuffix(commitMessage, "```")
-	commitMessage = strings.TrimSpace(commitMessage)
-
-	return commitMessage, nil
-}
-
-func (g *CommitMessageGenerator) generateGeminiCommitMessage(diff string, commitStyle string) (string, error) {
-	geminiUrl := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", g.geminiAPIKey)
-	
-	var userContent string
-	if commitStyle != "" {
-		userContent = fmt.Sprintf("%s\n\n%s", commitStyle, diff)
-	} else {
-		userContent = diff
-	}
-
-	// Combine system prompt and user content for Gemini
-	fullPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, userContent)
-	
-	requestBody := GeminiRequest{
-		Contents: []GeminiContent{
-			{
-				Parts: []GeminiPart{
-					{Text: fullPrompt},
-				},
-			},
-		},
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", fmt.Errorf("marshaling request body: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", geminiUrl, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("sending request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading response body: %w", err)
-	}
-
-	var geminiResp GeminiResponse
-	err = json.Unmarshal(body, &geminiResp)
-	if err != nil {
-		return "", fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no content in response. Full response: %s", string(body))
-	}
-
-	commitMessage := geminiResp.Candidates[0].Content.Parts[0].Text
 	commitMessage = strings.TrimSpace(commitMessage)
 	
 	// Remove common prefixes that models might add
