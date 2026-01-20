@@ -38,8 +38,9 @@ type Message struct {
 }
 
 type OpenAIRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Model           string    `json:"model"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	Messages        []Message `json:"messages"`
 }
 
 type OpenAIResponse struct {
@@ -52,6 +53,7 @@ type OpenAIResponse struct {
 
 const defaultGroqBaseURL = "https://api.groq.com/openai/v1"
 const defaultGroqModel = "openai/gpt-oss-20b"
+const defaultReasoningEffort = "low"
 
 func main() {
 	generator, err := NewCommitMessageGenerator()
@@ -434,7 +436,8 @@ func (g *CommitMessageGenerator) generateCommitMessage(
 	}
 
 	requestBody := OpenAIRequest{
-		Model: model,
+		Model:           model,
+		ReasoningEffort: defaultReasoningEffort,
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userContent},
